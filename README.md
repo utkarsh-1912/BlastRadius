@@ -145,3 +145,5 @@ This repository's code, tests, and documentation were written with Claude (Anthr
 ## Future research
 
 `ReferenceEvaluator` is written independently enough from `local_evaluator.py` that a three-way check (local + reference + real AWS) is a natural extension — running all three even when a real AWS account is available, rather than only two, for a stronger agreement guarantee. Other natural extensions: resource-level (not just action-level) blast radius for wildcard grants, cross-account role assumption chains, and a scheduled/recurring review mode.
+#   B l a s t R a d i u s  
+ 
