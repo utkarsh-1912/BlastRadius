@@ -7,6 +7,22 @@
 }
 
 body {
-  background-color: #f7f7f6;
-  color: #1c1c1c;
+  background-color: #f8fafc; /* slate-50 */
+  color: #0f172a; /* slate-900 */
+}
+
+* {
+  border-color: rgb(226 232 240); /* slate-200, so plain `border` utility matches the design */
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(203 213 225); /* slate-300 */
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

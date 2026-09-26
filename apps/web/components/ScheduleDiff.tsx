@@ -1,50 +1,55 @@
 "use client";
 
+import { Download } from "lucide-react";
 import { BlastRadiusChange } from "@/lib/types";
+import { Card, CardHeader, CardTitle, CardBody } from "@/components/ui/Card";
+import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 
-const SEVERITY_STYLES: Record<string, string> = {
-  critical: "bg-red-100 text-red-800",
-  high: "bg-orange-100 text-orange-800",
-  medium: "bg-amber-100 text-amber-800",
-  low: "bg-gray-100 text-gray-600",
+const SEVERITY_TONE: Record<string, "danger" | "warning" | "slate"> = {
+  critical: "danger",
+  high: "warning",
+  medium: "slate",
+  low: "slate",
 };
-
-function SeverityBadge({ severity }: { severity: string }) {
-  return (
-    <span className={`rounded px-1.5 py-0.5 text-xs font-medium uppercase ${SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.medium}`}>
-      {severity}
-    </span>
-  );
-}
 
 function Row({ c, safe }: { c: BlastRadiusChange; safe: boolean }) {
   return (
     <tr>
-      <td className="px-4 py-2">
-        <div className="font-medium text-gray-800">{c.action}</div>
-        {c.shared_with_roles.length > 0 && (
-          <div className="text-xs text-gray-400">shared with {c.shared_with_roles.join(", ")}</div>
-        )}
+      <td className="px-4 py-3">
+        <div className="font-mono text-[13px] font-medium text-slate-800">{c.action}</div>
+        {c.shared_with_roles.length > 0 && <div className="mt-0.5 text-xs text-slate-400">shared with {c.shared_with_roles.join(", ")}</div>}
       </td>
-      <td className="px-4 py-2">
-        <SeverityBadge severity={c.severity} />
+      <td className="px-4 py-3">
+        <Badge tone={SEVERITY_TONE[c.severity] ?? "slate"}>{c.severity}</Badge>
       </td>
-      <td className="px-4 py-2 text-gray-500">
-        {c.source_policy} <span className="text-gray-300">({c.policy_kind})</span>
+      <td className="px-4 py-3 text-slate-500">
+        {c.source_policy} <span className="text-slate-300">({c.policy_kind})</span>
       </td>
-      <td className="px-4 py-2 text-gray-500">{c.last_accessed ? c.last_accessed.slice(0, 10) : "never"}</td>
-      <td className="px-4 py-2 text-gray-500">
+      <td className="px-4 py-3 text-slate-500">{c.last_accessed ? c.last_accessed.slice(0, 10) : "never"}</td>
+      <td className="px-4 py-3 text-slate-500">
         {c.events_checked} replayed{c.broken_event_count > 0 ? `, ${c.broken_event_count} would break` : ""}
       </td>
-      <td className={`px-4 py-2 font-medium ${safe ? "text-emerald-700" : "text-accent"}`}>
-        {safe ? "Safe — proven by replay" : "Flagged — not auto-proposed"}
+      <td className="px-4 py-3">
+        <Badge tone={safe ? "success" : "danger"}>{safe ? "Safe" : "Flagged"}</Badge>
       </td>
     </tr>
   );
 }
 
 function toCsv(rows: BlastRadiusChange[]): string {
-  const header = ["role_name", "action", "severity", "policy", "policy_kind", "last_accessed", "events_checked", "broken_event_count", "safe_to_remove", "shared_with_roles"];
+  const header = [
+    "role_name",
+    "action",
+    "severity",
+    "policy",
+    "policy_kind",
+    "last_accessed",
+    "events_checked",
+    "broken_event_count",
+    "safe_to_remove",
+    "shared_with_roles",
+  ];
   const lines = rows.map((c) =>
     [
       c.role_name,
@@ -77,56 +82,55 @@ function downloadCsv(rows: BlastRadiusChange[]) {
 
 export default function ScheduleDiff({ safe, unsafe }: { safe: BlastRadiusChange[]; unsafe: BlastRadiusChange[] }) {
   return (
-    <section className="border-t border-gray-200 bg-white px-6 py-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Blast Radius Results</h2>
+    <Card>
+      <CardHeader className="flex items-center justify-between">
+        <CardTitle>Blast Radius Results</CardTitle>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-400">
-            {safe.length} safe to remove &middot; {unsafe.length} flagged
+          <span className="text-xs text-slate-400">
+            {safe.length} safe &middot; {unsafe.length} flagged
           </span>
           {(safe.length > 0 || unsafe.length > 0) && (
-            <button
-              className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
-              onClick={() => downloadCsv([...safe, ...unsafe])}
-            >
+            <Button variant="secondary" size="sm" onClick={() => downloadCsv([...safe, ...unsafe])}>
+              <Download className="h-3.5 w-3.5" />
               Export CSV
-            </button>
+            </Button>
           )}
         </div>
-      </div>
-      {safe.length === 0 && unsafe.length === 0 ? (
-        <p className="text-sm text-gray-500">No unused permissions found — nothing to propose.</p>
-      ) : (
-        <div className="overflow-hidden rounded-md border border-gray-200">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-              <tr>
-                <th className="px-4 py-2 text-left">Action</th>
-                <th className="px-4 py-2 text-left">Severity</th>
-                <th className="px-4 py-2 text-left">Policy</th>
-                <th className="px-4 py-2 text-left">Last used</th>
-                <th className="px-4 py-2 text-left">Replay</th>
-                <th className="px-4 py-2 text-left">Verdict</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {safe.map((c) => (
-                <Row key={`${c.role_name}-${c.action}`} c={c} safe={true} />
-              ))}
-              {unsafe.map((c) => (
-                <Row key={`${c.role_name}-${c.action}`} c={c} safe={false} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      </CardHeader>
+      <CardBody className="!p-0">
+        {safe.length === 0 && unsafe.length === 0 ? (
+          <p className="p-5 text-sm text-slate-500">No unused permissions found — nothing to propose.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Action</th>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Severity</th>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Policy</th>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Last used</th>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Replay</th>
+                  <th className="whitespace-nowrap px-4 py-2 text-left">Verdict</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {safe.map((c) => (
+                  <Row key={`${c.role_name}-${c.action}`} c={c} safe={true} />
+                ))}
+                {unsafe.map((c) => (
+                  <Row key={`${c.role_name}-${c.action}`} c={c} safe={false} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardBody>
       {unsafe.length > 0 && (
-        <p className="mt-3 text-xs text-gray-500">
+        <p className="border-t border-slate-100 px-5 py-3 text-xs text-slate-400">
           Flagged permissions had real historical evidence of use with no redundant grant elsewhere — a naive
-          "unused for 90 days" check would have proposed removing these too. Blast Radius excludes them from the
-          auto-approved list instead.
+          &ldquo;unused for 90 days&rdquo; check would have proposed removing these too.
         </p>
       )}
-    </section>
+    </Card>
   );
 }

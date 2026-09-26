@@ -1,34 +1,35 @@
 import { Understood } from "@/lib/types";
+import { Card, CardHeader, CardTitle, CardBody } from "@/components/ui/Card";
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="mt-0.5 text-sm font-medium text-slate-800">{value}</div>
+    </div>
+  );
+}
 
 export default function ConstraintPanel({ understood }: { understood: Understood }) {
   return (
-    <section className="border-b border-gray-200 bg-white px-6 py-5 text-sm">
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500">Formalized Request</h2>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <div className="text-xs text-gray-400">Role</div>
-          <div className="font-medium text-gray-800">{understood.role_name ?? understood.role_prefix ?? "all roles"}</div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Formalized Request</CardTitle>
+      </CardHeader>
+      <CardBody>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Role" value={understood.role_name ?? understood.role_prefix ?? "all roles"} />
+          <Field label="Lookback window" value={`${understood.lookback_days} days`} />
+          <Field label="Excluded actions" value={understood.exclude_actions.length ? understood.exclude_actions.join(", ") : "none"} />
+          <Field
+            label="Excluded roles"
+            value={understood.exclude_role_patterns.length ? understood.exclude_role_patterns.join(", ") : "none"}
+          />
         </div>
-        <div>
-          <div className="text-xs text-gray-400">Lookback window</div>
-          <div className="font-medium text-gray-800">{understood.lookback_days} days</div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-400">Excluded actions</div>
-          <div className="font-medium text-gray-800">
-            {understood.exclude_actions.length ? understood.exclude_actions.join(", ") : "none"}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-400">Excluded roles</div>
-          <div className="font-medium text-gray-800">
-            {understood.exclude_role_patterns.length ? understood.exclude_role_patterns.join(", ") : "none"}
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 text-xs text-gray-400">
-        Only literal, unused actions are ever proposed — wildcard grants (e.g. "s3:*") are never touched.
-      </div>
-    </section>
+        <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
+          Only literal, unused actions are ever proposed — wildcard grants (e.g. <code>s3:*</code>) are never touched.
+        </p>
+      </CardBody>
+    </Card>
   );
 }

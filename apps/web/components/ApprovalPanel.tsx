@@ -1,6 +1,10 @@
 "use client";
 
+import { CheckCircle2, ShieldAlert } from "lucide-react";
 import { ReviewRun } from "@/lib/types";
+import { Card, CardBody } from "@/components/ui/Card";
+import Button from "@/components/ui/Button";
+import Spinner from "@/components/ui/Spinner";
 
 interface Props {
   run: ReviewRun;
@@ -12,64 +16,73 @@ interface Props {
 export default function ApprovalPanel({ run, onApprove, onReject, busy }: Props) {
   if (run.status === "awaiting_approval") {
     return (
-      <section className="border-t border-gray-200 bg-white px-6 py-5">
-        <p className="mb-4 text-sm text-gray-700">
-          Blast radius analysis complete. <strong>{run.safe_changes.length}</strong> permission(s) proven safe to
-          remove; <strong>{run.unsafe_candidates.length}</strong> flagged and excluded.
-          <br />
-          Nothing has been changed in AWS IAM yet. Approve the safe removals?
-        </p>
-        <div className="flex gap-3">
-          <button
-            className="rounded-md border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-40"
-            onClick={onReject}
-            disabled={busy}
-          >
-            Reject
-          </button>
-          <button
-            className="rounded-md bg-accent px-5 py-2 text-sm font-medium text-white transition hover:bg-accent-dark disabled:opacity-40"
-            onClick={onApprove}
-            disabled={busy || run.safe_changes.length === 0}
-          >
-            Approve &amp; Revoke in AWS IAM
-          </button>
-        </div>
-      </section>
+      <Card className="border-warning-500/30 bg-warning-50/40">
+        <CardBody>
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warning-500" strokeWidth={2} />
+            <p className="text-sm text-slate-700">
+              Blast radius analysis complete. <strong>{run.safe_changes.length}</strong> permission(s) proven safe to
+              remove; <strong>{run.unsafe_candidates.length}</strong> flagged and excluded.
+              <br />
+              Nothing has been changed in AWS IAM yet. Approve the safe removals?
+            </p>
+          </div>
+          <div className="mt-4 flex gap-3">
+            <Button variant="secondary" onClick={onReject} disabled={busy}>
+              Reject
+            </Button>
+            <Button variant="destructive" onClick={onApprove} disabled={busy || run.safe_changes.length === 0}>
+              {busy && <Spinner className="h-4 w-4" />}
+              Approve &amp; Revoke in AWS IAM
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
     );
   }
 
   if (run.status === "rejected") {
     return (
-      <section className="border-t border-gray-200 bg-white px-6 py-5 text-sm text-gray-600">
-        No changes were made to AWS IAM.
-      </section>
+      <Card>
+        <CardBody className="text-sm text-slate-500">No changes were made to AWS IAM.</CardBody>
+      </Card>
     );
   }
 
   if (run.status === "no_candidates") {
     return (
-      <section className="border-t border-gray-200 bg-white px-6 py-5 text-sm text-gray-600">
-        No unused permissions found for this role. Nothing to propose.
-      </section>
+      <Card>
+        <CardBody className="text-sm text-slate-500">No unused permissions found for this role. Nothing to propose.</CardBody>
+      </Card>
     );
   }
 
   if (run.status === "verified" && run.verify_result) {
     return (
-      <section className="border-t border-gray-200 bg-white px-6 py-5 text-sm">
-        <div className="space-y-1 text-emerald-700">
-          <div>✓ {run.verify_result.roles_updated} role(s) updated</div>
-          <div>✓ AWS IAM re-read</div>
-          <div>✓ {run.verify_result.permissions_removed} permission(s) confirmed removed</div>
-          <div>✓ Verification passed</div>
-        </div>
-      </section>
+      <Card className="border-success-500/30 bg-success-50/40">
+        <CardBody className="space-y-2 text-sm text-success-700">
+          {[
+            `${run.verify_result.roles_updated} role(s) updated`,
+            "AWS IAM re-read",
+            `${run.verify_result.permissions_removed} permission(s) confirmed removed`,
+            "Verification passed",
+          ].map((line) => (
+            <div key={line} className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" strokeWidth={2} />
+              {line}
+            </div>
+          ))}
+        </CardBody>
+      </Card>
     );
   }
 
   if (run.status === "failed") {
-    return <section className="border-t border-gray-200 bg-white px-6 py-5 text-sm text-accent">{run.error}</section>;
+    return (
+      <Card className="border-accent/30 bg-red-50/40">
+        <CardBody className="text-sm text-accent-dark">{run.error}</CardBody>
+      </Card>
+    );
   }
 
   return null;

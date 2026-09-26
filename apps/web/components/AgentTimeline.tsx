@@ -1,45 +1,53 @@
+import { CheckCircle2, XCircle, AlertTriangle, PauseCircle, Circle, Radar } from "lucide-react";
 import { TimelineEvent } from "@/lib/types";
+import { Card, CardHeader, CardTitle, CardBody } from "@/components/ui/Card";
+import EmptyState from "@/components/ui/EmptyState";
 
-const KIND_STYLES: Record<TimelineEvent["kind"], string> = {
-  success: "text-emerald-700",
-  error: "text-accent",
-  warn: "text-amber-700",
-  waiting: "text-gray-500",
-  info: "text-gray-700",
-};
-
-const KIND_MARK: Record<TimelineEvent["kind"], string> = {
-  success: "✓",
-  error: "✗",
-  warn: "!",
-  waiting: "⏸",
-  info: "·",
+const KIND_META: Record<TimelineEvent["kind"], { icon: typeof Circle; dot: string; text: string }> = {
+  success: { icon: CheckCircle2, dot: "text-success-500", text: "text-slate-700" },
+  error: { icon: XCircle, dot: "text-accent", text: "text-accent" },
+  warn: { icon: AlertTriangle, dot: "text-warning-500", text: "text-slate-700" },
+  waiting: { icon: PauseCircle, dot: "text-slate-400", text: "text-slate-500" },
+  info: { icon: Circle, dot: "text-slate-300", text: "text-slate-600" },
 };
 
 function formatTime(ts: number): string {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString([], { hour12: false });
+  return new Date(ts * 1000).toLocaleTimeString([], { hour12: false });
 }
 
 export default function AgentTimeline({ events }: { events: TimelineEvent[] }) {
   return (
-    <section className="flex flex-col border-r border-gray-200 bg-white">
-      <div className="border-b border-gray-100 px-5 py-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
-        Agent Activity
-      </div>
-      <div className="flex-1 space-y-2 overflow-y-auto px-5 py-4">
-        {events.length === 0 && <p className="text-sm text-gray-400">Waiting for a planning request…</p>}
-        {events.map((e, i) => (
-          <div key={i} className="flex gap-2 text-sm">
-            <span className="w-16 shrink-0 font-mono text-xs text-gray-400">{formatTime(e.ts)}</span>
-            <span className={`shrink-0 font-mono ${KIND_STYLES[e.kind]}`}>{KIND_MARK[e.kind]}</span>
-            <div>
-              <div className={`font-medium ${KIND_STYLES[e.kind]}`}>{e.label}</div>
-              {e.detail && <div className="text-xs text-gray-500">{e.detail}</div>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
+    <Card className="flex h-full flex-col overflow-hidden">
+      <CardHeader>
+        <CardTitle>Agent Activity</CardTitle>
+      </CardHeader>
+      <CardBody className="flex-1 overflow-y-auto">
+        {events.length === 0 ? (
+          <EmptyState icon={Radar} title="Waiting for a request" description="The agent's activity will stream here." />
+        ) : (
+          <ol>
+            {events.map((e, i) => {
+              const meta = KIND_META[e.kind];
+              const Icon = meta.icon;
+              return (
+                <li key={i} className="flex gap-3 text-sm">
+                  <div className="flex flex-col items-center pt-0.5">
+                    <Icon className={`h-4 w-4 shrink-0 ${meta.dot}`} strokeWidth={2} />
+                    {i < events.length - 1 && <div className="my-1 w-px flex-1 bg-slate-100" />}
+                  </div>
+                  <div className="min-w-0 pb-4">
+                    <div className="flex items-baseline gap-2">
+                      <span className={`font-medium ${meta.text}`}>{e.label}</span>
+                      <span className="font-mono text-[11px] text-slate-300">{formatTime(e.ts)}</span>
+                    </div>
+                    {e.detail && <p className="mt-0.5 text-xs leading-relaxed text-slate-500">{e.detail}</p>}
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </CardBody>
+    </Card>
   );
 }

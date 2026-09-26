@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import ChatPanel from "@/components/ChatPanel";
+import PageHeader from "@/components/ui/PageHeader";
 import { createReview } from "@/lib/api";
 
 const DEMO_REQUEST = "Review IAM access for the data-pipeline-role role over the last 90 days.";
@@ -25,17 +26,13 @@ export default function Home() {
   };
 
   return (
-    <main className="flex flex-col">
-      <section className="px-6 pb-2 pt-8">
-        <h1 className="text-xl font-semibold text-gray-900">Start a Blast Radius Review</h1>
-        <p className="mt-1 max-w-2xl text-sm text-gray-500">
-          Describe which role (or roles) to review. Blast Radius reads the real IAM policy and CloudTrail
-          history, replays every candidate permission through two independent evaluators, and stops for your
-          approval before anything is revoked.
-        </p>
-      </section>
+    <main className="flex flex-col pb-10">
+      <PageHeader
+        title="Start a Blast Radius Review"
+        description="Describe which role (or roles) to review. Blast Radius reads the real IAM policy and CloudTrail history, replays every candidate permission through two independent evaluators, and stops for your approval before anything is revoked."
+      />
       <ChatPanel onSubmit={handleSubmit} disabled={loading} defaultValue={DEMO_REQUEST} />
-      {error && <p className="px-6 py-3 text-sm text-accent">{error}</p>}
+      {error && <p className="mx-8 mt-3 text-sm text-accent">{error}</p>}
     </main>
   );
 }
