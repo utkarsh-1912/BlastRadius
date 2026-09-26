@@ -62,3 +62,27 @@ export async function checkPermission(roleName: string, action: string, lookback
   if (!res.ok) throw new Error(await errorMessage(res, "Failed to check permission"));
   return res.json();
 }
+
+export interface RoleSummary {
+  role_name: string;
+  arn: string;
+}
+
+/** Real IAM role names, for autocomplete. Returns [] rather than throwing on
+ * failure (e.g. AWS not configured) — the /check page degrades to plain text
+ * input instead of blocking on it. */
+export async function listRoles(prefix?: string): Promise<RoleSummary[]> {
+  const qs = prefix ? `?prefix=${encodeURIComponent(prefix)}` : "";
+  const res = await fetch(`/api/roles${qs}`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+/** A role's real granted literal actions, for autocomplete. Same
+ * fail-soft-to-empty-list behavior as listRoles. */
+export async function listRoleActions(roleName: string): Promise<string[]> {
+  if (!roleName.trim()) return [];
+  const res = await fetch(`/api/roles/${encodeURIComponent(roleName)}/actions`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}

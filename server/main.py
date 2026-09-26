@@ -12,6 +12,10 @@ Endpoints (consumed by apps/web's Next.js API routes):
   POST /api/check                {"role_name", "action", "lookback_days"?} -> a
                                    standalone, read-only blast-radius check for one
                                    permission, with no review/approval workflow
+  GET  /api/roles                real IAM role names (?prefix=), for the /check page's
+                                   role autocomplete
+  GET  /api/roles/{role}/actions  that role's real granted literal actions, for the
+                                   /check page's action autocomplete
 
 Run: `uvicorn main:app --reload --port 8010` from the server/ directory.
 """
@@ -28,7 +32,7 @@ from pydantic import BaseModel
 from agent import store
 from agent.orchestrator import Orchestrator, ReviewRun
 from agent.trueforge_client import TrueForgeClient
-from aws_integration.client import AwsIamClient, IamError
+from aws_integration.client import AwsIamClient, IamError, IamNotFound
 from aws_integration.cloudtrail import CloudTrailSource, DemoCloudTrailSource
 from aws_integration.simulate import AwsPolicySimulator
 
@@ -147,6 +151,41 @@ def reject_review(run_id: str):
 def list_reviews(limit: int = 50):
     """Audit history: past reviews, most recently updated first."""
     return store.list_runs(limit=limit)
+
+
+@app.get("/api/roles")
+def list_roles_endpoint(prefix: Optional[str] = None):
+    """Real IAM role names, for the /check page's autocomplete — never a
+    made-up list; if AWS isn't configured this fails loudly (502) rather
+    than silently returning nothing."""
+    orchestrator = _build_orchestrator()
+    if orchestrator.iam is None:
+        raise HTTPException(status_code=502, detail="AWS IAM is not configured.")
+    try:
+        raw = orchestrator.iam.list_roles(name_prefix=prefix)
+    except IamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return [{"role_name": r["RoleName"], "arn": r["Arn"]} for r in raw]
+
+
+@app.get("/api/roles/{role_name}/actions")
+def list_role_actions(role_name: str):
+    """The role's real granted literal actions (no wildcards), for the
+    /check page's action autocomplete — so a spot-check is against an
+    action the role actually has, not a guess."""
+    orchestrator = _build_orchestrator()
+    if orchestrator.iam is None:
+        raise HTTPException(status_code=502, detail="AWS IAM is not configured.")
+    try:
+        role = orchestrator.iam.get_role(role_name)
+    except IamNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except IamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    actions = sorted(
+        {a for p in role.policies for s in p.statements if s.effect == "Allow" for a in s.actions if "*" not in a and "?" not in a}
+    )
+    return actions
 
 
 @app.post("/api/check")
