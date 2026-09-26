@@ -13,7 +13,7 @@ Show the actual `data-pipeline-role` in AWS IAM (or the local moto-backed accoun
 Paste the demo request and click **Run Blast Radius Review**.
 
 ### 1:30–2:30 — Watch the agent work
-Point at the Agent Activity timeline:
+Point at the Agent Activity timeline in the left panel of the review page:
 ```
 Understanding request
 Extracted parameters
@@ -25,6 +25,8 @@ Real AWS policy simulator unavailable -> falling back to the reference evaluator
 Blast radius analysis complete
 Waiting for human approval
 ```
+
+If asked for more than 90 days of history, an extra line appears here plainly stating the cap and why (AWS CloudTrail's own Event History doesn't retain further back than that by default) — worth pointing out if a judge asks "what if I want a year of history?": the honest answer, stated by the tool itself, not a silent shortfall.
 
 ### 2:30–3:15 — The results table
 Show the safe-vs-flagged table:
@@ -49,3 +51,9 @@ Show the verification panel: roles updated, IAM re-read, permissions confirmed r
 ## Live-AWS variant
 
 With a real AWS account and enough CloudTrail history (`USE_DEMO_CLOUDTRAIL=false`), the same flow runs against `iam:SimulateCustomPolicy` instead of the reference evaluator — the "validated via" label in the header changes accordingly, and that's the only difference in the demo script.
+
+## Optional: show it directly inside TrueForge, not just the dashboard
+
+Our dashboard is a polished frontend on top of the same agent — worth proving that directly if there's time. Open TrueForge's own chat UI (`http://localhost:8790`), pick the `blast-radius` agent, and send the same demo request there. This shows the raw tool calls (`get_role_policies`, `get_cloudtrail_history`, `compute_blast_radius`) as TrueForge's own UI renders them, plus the real approval pause before `revoke_permissions` — the literal hackathon requirement ("agent reaches a real system, runs code safely in a sandbox, stops for approval") with nothing of ours in between. A good line here: "everything you just saw in our dashboard is really just a nicer window onto this."
+
+**Sanity check before doing this live**: run it once yourself beforehand and confirm the agent actually calls tools rather than falling back to generic advice — if the MCP connection isn't live when a session starts, the agent behaves as if it has no tools at all rather than erroring loudly (see [docs/trueforge-setup.md](trueforge-setup.md#6-verify-its-actually-using-trueforge-not-the-fallback)). Not something you want to discover for the first time on stage.

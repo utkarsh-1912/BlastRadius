@@ -79,6 +79,14 @@ The important line is `require_approval_for_tools: ["revoke_permissions"]`. This
 
 Instructions and skills (`agent/skills/blast-radius-analysis.md`, `agent/skills/approval.md`) tell the agent the *procedure* (understand → retrieve → identify candidates → compute blast radius for each → present both the safe and flagged lists → stop → wait for approval → commit → verify) — but the procedure being followed correctly is not what makes this safe. The `require_approval_for_tools` gate is what makes it safe, independent of whether the agent follows instructions perfectly.
 
+## Agent honesty: the anti-fabrication rule
+
+Found live, the hard way: asked to review a role that didn't exist in the AWS account it was pointed at, the agent — with the MCP connection not actually live at the time — didn't say "role not found." It fabricated an entire plausible-looking report: invented service names, last-accessed dates, unused-permission counts, and a synthesized least-privilege policy JSON, none of it backed by any real tool call. That is the single worst failure mode possible for a tool whose entire premise is "never trust invented data, only real evidence" — worse than the tool simply not working, because it looks like it worked.
+
+`agent/blast-radius.agent.json`'s instructions now open with an explicit, unconditional rule addressing exactly this: every fact the agent states must trace back to an actual tool call's actual returned content in that turn; if `list_roles`/`get_role_policies` returns no match, an empty result, or an error, the agent must say so plainly and stop — never invent example data, mockup dashboards, or "here's what it would look like" content, under any framing, regardless of how the request is phrased. This sits above the numbered procedure, not folded into step 2, because it needs to override the model's default instinct to be helpful and produce *a* nice-looking answer even when it has none.
+
+If you ever see this again, it means the instructions weren't actually applied to that session (e.g. `setup_trueforge.py` wasn't re-run after a manifest change, or the session started before it was) — re-run setup and start a fresh session, don't assume the rule is unenforceable.
+
 ## Fallback behavior (what happens without a live TrueForge)
 
 | Missing | Effect |
@@ -91,8 +99,18 @@ None of these fallbacks are silent — every one produces a `kind="warn"` line i
 
 ## Known gaps / what to verify at the venue
 
-This session found and fixed one real integration bug against a live (but otherwise unconfigured) TrueForge instance — `create_session`'s body used the wrong field name (`agent_name` instead of `agent`), caught via a real `400` response. That's the kind of thing that only surfaces against a real instance. Before the actual demo, with a real model + Daytona sandbox provider configured, do the following once to make sure the rest of the sandbox-exec path holds up too:
+This project was iterated against a real, running TrueForge instance (not just mocks), and several integration bugs it exposed are already fixed — see the [changelog below](#fixed-against-a-live-instance). What's still unverified, because it needs a fully configured Daytona sandbox provider that wasn't available while building this: a live turn actually reaching the sandbox `exec` tool and returning real, parseable stdout. The event-parsing logic in `_extract_exec_stdout` (`server/agent/trueforge_client.py`) is written directly from the documented event schema but has not itself been exercised end to end. Before the actual demo, with a real model + Daytona configured:
 
 1. `python scripts/setup_trueforge.py` — confirm it reports every step `✓`.
 2. Trigger one review through the UI or `POST /api/review` and check the agent timeline for `"Executing Python in TrueForge sandbox"` / `sandbox_used: true` in the response, rather than a `"TrueForge sandbox unavailable"` warning.
 3. If it still falls back, check TrueForge's own session/turn UI for that session — the raw events will show exactly where the turn stalled or what the agent actually did instead of calling `exec`.
+
+### Fixed against a live instance
+
+Real bugs only a live TrueForge instance could have exposed, found and fixed while building this:
+
+- `create_session`'s request body used the wrong field name (`agent_name` instead of `agent`) — caught via a real `400 Invalid input` response.
+- `exec_python()` didn't exist at all on `TrueForgeClient` before this project needed it — it was a documented gap, not a bug, until it got implemented for real (session/turn/event-parsing) once a live instance was available to test against.
+- `scripts/setup_trueforge.py` never registered the agent's `skills` correctly — TrueForge expects skills pre-registered via a separate API this project doesn't use, so agent creation 422'd with `Unknown skill "..." — not configured` until the script was changed to inline skill content into the agent's instructions instead.
+- A WSL/Windows networking split (TrueForge in WSL, the MCP server on Windows) produced `ECONNREFUSED` even with everything actually running — see [wsl-networking.md](wsl-networking.md), a page dedicated to this because it's easy to misdiagnose as "the server crashed."
+- The agent fabricating an entire fake report when it had no real tool access — see ["Agent honesty" above](#agent-honesty-the-anti-fabrication-rule).

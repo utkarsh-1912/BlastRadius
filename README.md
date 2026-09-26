@@ -53,8 +53,8 @@ Both look identical to a recency-based tool. Only a replay against real history 
 - **`server/agent/orchestrator.py`** — UNDERSTAND → RETRIEVE → IDENTIFY CANDIDATES → SANDBOX SIMULATE → VALIDATE → EXPLAIN → STOP → APPROVE → COMMIT → VERIFY. The only module allowed to call the write path, and only when a run's status is `awaiting_approval`. Also handles cross-role blast radius for shared managed policies, and a standalone single-permission check (`check_permission()`).
 - **`server/agent/store.py`** — a small SQLite-backed audit trail of past reviews, surviving API restarts.
 - **`integrations/aws-iam-mcp/`** — the actual MCP server TrueForge calls ("Blast Radius AWS IAM Tool Layer"). Seven tools, one of them (`revoke_permissions`) gated by TrueForge's own approval mechanism.
-- **`agent/blast-radius.agent.json`** — the TrueForge agent manifest: model, the gated MCP write tool, sandbox on.
-- **`apps/web/`** — the Next.js dashboard: request input, live agent timeline, safe-vs-flagged results table (with severity badges and CSV export), a standalone permission-check panel, review history, validation stats, and the approve/reject gate.
+- **`agent/blast-radius.agent.json`** — the TrueForge agent manifest: model, the gated MCP write tool, sandbox on, and an explicit anti-fabrication rule (see "Agent honesty" below).
+- **`apps/web/`** — a left-sidebar enterprise dashboard (Next.js), four pages: **/** (new review), **/reviews** (audit history), **/reviews/[id]** (one review's timeline, results and approve/reject gate), **/check** (standalone permission spot-check). Results carry severity badges and a CSV export.
 
 ## Why TrueForge
 
@@ -68,6 +68,10 @@ For the full detail on this — split across three pages so implementation, wiri
 - **[docs/trueforge-implementation.md](docs/trueforge-implementation.md)** — the actual client code that talks to TrueForge (`server/agent/trueforge_client.py`), how sandbox execution is driven end to end, and what's genuinely verified vs. best-effort.
 - **[docs/trueforge-integration.md](docs/trueforge-integration.md)** — how Blast Radius is wired *into* TrueForge: the agent manifest, the MCP tool layer, the approval gate, and fallback behavior when any piece isn't configured.
 - **[docs/trueforge-setup.md](docs/trueforge-setup.md)** — step-by-step instructions to actually run it on a live TrueForge instance, plus a troubleshooting table from real issues hit while building this.
+
+## Agent honesty
+
+Found live, the hard way: asked to review a role that didn't actually exist in the connected AWS account (with the MCP connection not actually live at the time), the agent didn't report "role not found" — it fabricated an entire plausible-looking report: invented service names, last-accessed dates, unused-permission counts, and a synthesized least-privilege policy, none of it backed by any real tool call. That's the worst possible failure mode for a tool whose whole premise is "never trust invented data." `agent/blast-radius.agent.json`'s instructions now open with an explicit, unconditional rule against this: every fact the agent states must trace back to an actual tool call's actual returned content in that turn, or it must say so and stop — never invent example data or mockup content under any framing. See [docs/trueforge-integration.md](docs/trueforge-integration.md#agent-honesty-the-anti-fabrication-rule) for the full story.
 
 ## Sandbox security
 
@@ -97,7 +101,7 @@ moto_server -p 5555
 # in .env: AWS_ENDPOINT_URL=http://localhost:5555, AWS_ACCESS_KEY_ID=testing, AWS_SECRET_ACCESS_KEY=testing
 ```
 
-**Have an AWS account?** Leave `AWS_ENDPOINT_URL` unset and configure credentials the normal way (`AWS_PROFILE`, or `aws configure`). A brand-new account's CloudTrail history will be thin, so `USE_DEMO_CLOUDTRAIL=true` (the default) uses a labeled historical export instead — flip it to `false` once your account has real history to replay against.
+**Have an AWS account?** Leave `AWS_ENDPOINT_URL` unset and configure credentials the normal way (`AWS_PROFILE`, or `aws configure`) — see [docs/aws-setup.md](docs/aws-setup.md) for exact console steps and a scoped IAM policy if you don't want to use `AdministratorAccess`. A brand-new account's CloudTrail history will be thin, so `USE_DEMO_CLOUDTRAIL=true` (the default) uses a labeled historical export instead — flip it to `false` once your account has real history to replay against. Either way, the lookback window is capped at 90 days regardless of what's requested — AWS CloudTrail's own default Event History doesn't go back further than that without a dedicated Trail.
 
 ### 2. Seed the demo role
 
@@ -116,7 +120,7 @@ python integrations/aws-iam-mcp/server.py # in another
 python scripts/setup_trueforge.py         # registers model, sandbox, MCP server, agent
 ```
 
-TrueForge doesn't run natively on Windows — if you're on Windows, do this (and the rest of the stack) inside WSL Ubuntu. See [docs/trueforge-setup.md](docs/trueforge-setup.md) for the full walkthrough.
+TrueForge doesn't run natively on Windows — if you're on Windows, it runs inside WSL Ubuntu. See [docs/trueforge-setup.md](docs/trueforge-setup.md) for the full walkthrough, and specifically [docs/wsl-networking.md](docs/wsl-networking.md) if TrueForge (in WSL) can't reach a server you've confirmed is actually running (on Windows) — `ECONNREFUSED` despite the server being up is a WSL/Windows network-boundary issue, not a crash, and has a two-line fix.
 
 ### 4. Run the app
 
@@ -140,7 +144,7 @@ cd server
 python -m pytest -q
 ```
 
-47 tests, all against real code paths (moto for AWS, no live account needed to run them): the local policy evaluator (wildcards, explicit-deny-wins, fail-closed on Conditions), candidate identification, risk-tier classification, the independent validator's agree/disagree logic (including a fail-closed disagreement test), a second reference evaluator's parity with the first, real IAM read/write behavior, cross-role blast radius for shared managed policies, the standalone permission-check path, the audit-history store, and — most importantly — `test_no_revoke_before_approval.py`, which proves no AWS IAM write ever happens before an explicit human approval, then exercises a full approve → commit → verify cycle against a real (moto-backed) IAM policy.
+53 tests, all against real code paths (moto for AWS, no live account needed to run them): the local policy evaluator (wildcards, explicit-deny-wins, fail-closed on Conditions), candidate identification, risk-tier classification, the independent validator's agree/disagree logic (including a fail-closed disagreement test), a second reference evaluator's parity with the first, real IAM read/write behavior, cross-role blast radius for shared managed policies, the standalone permission-check path, the audit-history store, the 90-day lookback cap, and — most importantly — `test_no_revoke_before_approval.py`, which proves no AWS IAM write ever happens before an explicit human approval, then exercises a full approve → commit → verify cycle against a real (moto-backed) IAM policy.
 
 ## AI disclosure
 
