@@ -23,6 +23,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
 
 load_dotenv()
+from env_utils import clean_blank_env  # noqa: E402
+
+clean_blank_env()
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 

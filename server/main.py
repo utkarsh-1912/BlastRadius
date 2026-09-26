@@ -3,9 +3,15 @@ Blast Radius API server (FastAPI). Thin HTTP layer over agent/orchestrator.py.
 
 Endpoints (consumed by apps/web's Next.js API routes):
   POST /api/review              {"request": "<natural language request>"}  -> ReviewRun
-  GET  /api/review/{id}         -> ReviewRun (poll this for the agent timeline)
+  GET  /api/review/{id}         -> ReviewRun (poll this for the agent timeline; falls
+                                   back to the persisted history store if the process
+                                   restarted and it's no longer live in memory)
   POST /api/review/{id}/approve -> triggers commit_and_verify() (the only write path)
   POST /api/review/{id}/reject  -> marks the run rejected; no AWS IAM write
+  GET  /api/reviews             -> list of past reviews (audit history)
+  POST /api/check                {"role_name", "action", "lookback_days"?} -> a
+                                   standalone, read-only blast-radius check for one
+                                   permission, with no review/approval workflow
 
 Run: `uvicorn main:app --reload --port 8010` from the server/ directory.
 """
@@ -19,13 +25,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from agent import store
 from agent.orchestrator import Orchestrator, ReviewRun
 from agent.trueforge_client import TrueForgeClient
-from aws_integration.client import AwsIamClient
+from aws_integration.client import AwsIamClient, IamError
 from aws_integration.cloudtrail import CloudTrailSource, DemoCloudTrailSource
 from aws_integration.simulate import AwsPolicySimulator
 
 load_dotenv()
+from env_utils import clean_blank_env  # noqa: E402
+
+clean_blank_env(["IAM_MCP_TOKEN", "TRUEFORGE_BASE_URL", "DAYTONA_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
 
 app = FastAPI(title="Blast Radius API")
 app.add_middleware(
@@ -74,32 +84,48 @@ class ReviewRequest(BaseModel):
     request: str
 
 
+class CheckRequest(BaseModel):
+    role_name: str
+    action: str
+    lookback_days: int = 90
+
+
 @app.post("/api/review")
 def create_review(body: ReviewRequest):
     orchestrator = _build_orchestrator()
     run = orchestrator.run(body.request)
     _RUNS[run.id] = run
+    store.save_run(run.to_dict())
     return run.to_dict()
 
 
 @app.get("/api/review/{run_id}")
 def get_review(run_id: str):
     run = _RUNS.get(run_id)
-    if run is None:
-        raise HTTPException(status_code=404, detail="Unknown review id")
-    return run.to_dict()
+    if run is not None:
+        return run.to_dict()
+    persisted = store.get_run(run_id)
+    if persisted is not None:
+        return persisted
+    raise HTTPException(status_code=404, detail="Unknown review id")
 
 
 @app.post("/api/review/{run_id}/approve")
 def approve_review(run_id: str):
     run = _RUNS.get(run_id)
     if run is None:
+        if store.get_run(run_id) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="This review is no longer live (the server restarted since it ran). Run a fresh review to approve changes against current IAM/CloudTrail state.",
+            )
         raise HTTPException(status_code=404, detail="Unknown review id")
     orchestrator = _build_orchestrator()
     try:
         orchestrator.commit_and_verify(run)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    store.save_run(run.to_dict())
     return run.to_dict()
 
 
@@ -113,7 +139,25 @@ def reject_review(run_id: str):
         orchestrator.reject(run)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    store.save_run(run.to_dict())
     return run.to_dict()
+
+
+@app.get("/api/reviews")
+def list_reviews(limit: int = 50):
+    """Audit history: past reviews, most recently updated first."""
+    return store.list_runs(limit=limit)
+
+
+@app.post("/api/check")
+def check_permission(body: CheckRequest):
+    """Standalone, read-only blast-radius check for one permission — no
+    review workflow, no approval gate, because nothing is ever written."""
+    orchestrator = _build_orchestrator()
+    try:
+        return orchestrator.check_permission(body.role_name, body.action, body.lookback_days)
+    except IamError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.get("/api/health")

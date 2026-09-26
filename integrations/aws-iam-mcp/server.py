@@ -34,6 +34,7 @@ from mcp.server.fastmcp import FastMCP
 _SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "server")
 sys.path.insert(0, os.path.abspath(_SERVER_DIR))
 
+from env_utils import clean_blank_env  # noqa: E402
 from aws_integration.client import AwsIamClient, IamError  # noqa: E402
 from aws_integration.cloudtrail import CloudTrailSource, DemoCloudTrailSource  # noqa: E402
 from aws_integration.simulate import AwsPolicySimulator  # noqa: E402
@@ -44,6 +45,7 @@ from blast_radius.simulator import run_local_replay  # noqa: E402
 from blast_radius.validator import validate_candidate  # noqa: E402
 
 load_dotenv()
+clean_blank_env(["IAM_MCP_TOKEN"])
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL")

@@ -74,6 +74,8 @@ class CandidatePermission:
     source_policy: AttachedPolicy
     last_accessed: Optional[datetime]
     reason: str  # why it's a candidate (grounded, not invented)
+    severity: str = "medium"  # "critical" | "high" | "medium" | "low" — prioritization only, never load-bearing
+    shared_with_roles: list[str] = field(default_factory=list)  # other roles this managed policy is attached to
 
 
 @dataclass
@@ -107,8 +109,11 @@ class BlastRadiusResult:
             "role_name": self.candidate.role_name,
             "action": self.candidate.action,
             "source_policy": self.candidate.source_policy.name,
+            "policy_kind": self.candidate.source_policy.kind,
             "last_accessed": self.candidate.last_accessed.isoformat() if self.candidate.last_accessed else None,
             "reason": self.candidate.reason,
+            "severity": self.candidate.severity,
+            "shared_with_roles": self.candidate.shared_with_roles,
             "events_checked": self.events_checked,
             "validator_agreement": self.validator_agreement,
             "safe_to_remove": self.safe_to_remove,

@@ -23,8 +23,10 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
 
 from agent.trueforge_client import TrueForgeClient, TrueForgeError, TrueForgeUnavailable  # noqa: E402
+from env_utils import clean_blank_env  # noqa: E402
 
 load_dotenv()
+clean_blank_env(["IAM_MCP_TOKEN", "TRUEFORGE_BASE_URL", "DAYTONA_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MODEL_FQN", "MODEL_ID"])
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 

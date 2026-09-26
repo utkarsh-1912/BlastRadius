@@ -119,6 +119,25 @@ class AwsIamClient:
             self._iam.create_policy_version(PolicyArn=policy_arn, PolicyDocument=json.dumps(new_doc), SetAsDefault=True)
             return {"status": "committed", "policy_kind": "managed", "policy_arn": policy_arn, "new_document": new_doc}
 
+    def list_policy_attachments(self, policy_arn: str) -> dict:
+        """
+        Every principal a customer-managed policy is attached to. This matters
+        because revoke_actions() on a managed policy creates a new policy
+        VERSION — which changes what EVERY attached role/user/group can do,
+        not just the one being reviewed. See agent/orchestrator.py, which uses
+        this to pull in every other attached role's CloudTrail history before
+        ever calling a shared policy's permission "safe to remove".
+        """
+        try:
+            resp = self._iam.list_entities_for_policy(PolicyArn=policy_arn)
+        except ClientError as e:
+            raise IamUnavailable(str(e)) from e
+        return {
+            "roles": [r["RoleName"] for r in resp.get("PolicyRoles", [])],
+            "users": [u["UserName"] for u in resp.get("PolicyUsers", [])],
+            "groups": [g["GroupName"] for g in resp.get("PolicyGroups", [])],
+        }
+
     def last_accessed_details(self, role_arn: str) -> Optional[dict]:
         """Best-effort: kick off + poll a generate-service-last-accessed-details
         job. Returns None if unsupported (e.g. under moto) rather than failing

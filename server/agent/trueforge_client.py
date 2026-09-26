@@ -40,6 +40,7 @@ class TrueForgeError(Exception):
 class TrueForgeClient:
     base_url: str = "http://localhost:8790"
     timeout_s: float = 20.0
+    agent_name: str = "blast-radius"
 
     def __post_init__(self):
         self.base_url = self.base_url.rstrip("/")
@@ -93,7 +94,7 @@ class TrueForgeClient:
     # ---------------- sessions / turns / events (runtime) ----------------
 
     def create_session(self, agent_name: str, external_id: Optional[str] = None) -> dict:
-        body: dict[str, Any] = {"agent_name": agent_name}
+        body: dict[str, Any] = {"agent": agent_name}
         if external_id:
             body["external_id"] = external_id
         return self._request("POST", "/sessions", body)
@@ -138,3 +139,87 @@ class TrueForgeClient:
                 return turn
             time.sleep(poll_interval_s)
         raise TrueForgeError(f"Timed out waiting for turn {turn_id} to complete.")
+
+    # ---------------- sandbox code execution ----------------
+
+    def exec_python(self, script: str, agent_name: Optional[str] = None, timeout_s: float = 20.0) -> str:
+        """
+        Best-effort: run `script` inside a REAL TrueForge sandbox, by driving
+        a real session/turn against a registered agent (agent/blast-radius.agent.json,
+        which has `sandbox.enabled: true`) and instructing it to execute the
+        script verbatim via the sandbox `exec` tool, then extracting that
+        tool call's stdout from the turn's events.
+
+        This requires: the target agent already registered in TrueForge
+        (scripts/setup_trueforge.py), and a sandbox provider (e.g. Daytona)
+        configured. If either is missing, or the turn doesn't produce a
+        parseable sandbox exec response within `timeout_s`, this raises
+        TrueForgeUnavailable — the same exception type every other reason
+        TrueForge can't be used raises — so callers (agent/orchestrator.py's
+        _sandbox_replay) fall back to a local, in-process replay exactly the
+        same way, with no special-casing needed for "sandbox exec specifically
+        isn't wired up" vs. "TrueForge isn't reachable at all".
+        """
+        agent = agent_name or self.agent_name
+        try:
+            session = self.create_session(agent_name=agent)
+            session_id = session.get("id") or session.get("session_id")
+            if not session_id:
+                raise TrueForgeUnavailable(f"create_session for agent '{agent}' returned no session id.")
+
+            message = (
+                "Run EXACTLY the following Python script using the sandbox exec tool, verbatim, "
+                "with no modification. Do not explain or summarize it — just execute it and stop.\n\n"
+                f"```python\n{script}\n```"
+            )
+            turn = self.send_turn(session_id, message)
+            turn_id = turn.get("id") or turn.get("turn_id")
+            if not turn_id:
+                raise TrueForgeUnavailable("send_turn returned no turn id.")
+
+            final_turn = self.wait_for_turn(session_id, turn_id, timeout_s=timeout_s)
+            status = final_turn.get("state", {}).get("status")
+            if status != "done":
+                raise TrueForgeUnavailable(f"Sandbox turn ended in unexpected status '{status}' (expected 'done').")
+
+            events = self.get_events(session_id)
+            stdout = _extract_exec_stdout(events)
+            if stdout is None:
+                raise TrueForgeUnavailable("Turn completed but no sandbox exec tool response was found in its events.")
+            return stdout
+        except TrueForgeUnavailable:
+            raise
+        except TrueForgeError as e:
+            raise TrueForgeUnavailable(f"Sandbox execution failed: {e}") from e
+        except Exception as e:  # e.g. malformed response shape from an unexpected TrueForge version
+            raise TrueForgeUnavailable(f"Sandbox execution failed unexpectedly: {e}") from e
+
+
+def _extract_exec_stdout(events: list) -> Optional[str]:
+    """
+    Find the content of the LAST sandbox `exec` system-tool response in a raw
+    session events list (GET /sessions/{id}/events). Mirrors the event shapes
+    documented in the reference `dress-rehearsal` project's
+    viewer/public/mapEvents.mjs: a `model.message` event's `tool_calls[i]` with
+    `tool_info.type == "truefoundry-system"` and `tool_info.name == "exec"`,
+    paired by `tool_call_id` with a later `tool.response` event.
+    """
+    exec_tool_call_ids: set[str] = set()
+    for item in events:
+        ev = item.get("event", item) if isinstance(item, dict) else item
+        if not isinstance(ev, dict) or ev.get("type") != "model.message":
+            continue
+        for tc in ev.get("tool_calls") or []:
+            info = tc.get("tool_info") or {}
+            if info.get("type") == "truefoundry-system" and info.get("name") == "exec":
+                exec_tool_call_ids.add(tc.get("id"))
+
+    last_stdout: Optional[str] = None
+    for item in events:
+        ev = item.get("event", item) if isinstance(item, dict) else item
+        if not isinstance(ev, dict) or ev.get("type") != "tool.response":
+            continue
+        if ev.get("tool_call_id") in exec_tool_call_ids:
+            content = ev.get("content")
+            last_stdout = content if isinstance(content, str) else str(content)
+    return last_stdout

@@ -9,13 +9,33 @@ export interface BlastRadiusChange {
   role_name: string;
   action: string;
   source_policy: string;
+  policy_kind: "managed" | "inline";
   last_accessed: string | null;
   reason: string;
+  severity: "critical" | "high" | "medium" | "low";
+  shared_with_roles: string[];
   events_checked: number;
   validator_agreement: boolean;
   safe_to_remove: boolean;
   broken_event_count: number;
   broken_events_sample: { event_time: string; action: string; resource_arns: string[] }[];
+}
+
+export interface ReviewSummary {
+  id: string;
+  request_text: string;
+  status: string;
+  role_name: string | null;
+  safe_count: number;
+  unsafe_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface PermissionCheckResult extends BlastRadiusChange {
+  granted: boolean;
+  message?: string;
+  validator_source?: string | null;
 }
 
 export interface VerifyResult {

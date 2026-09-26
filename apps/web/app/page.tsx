@@ -8,6 +8,8 @@ import ScheduleDiff from "@/components/ScheduleDiff";
 import ConstraintPanel from "@/components/ConstraintPanel";
 import ValidationPanel from "@/components/ValidationPanel";
 import ApprovalPanel from "@/components/ApprovalPanel";
+import PermissionCheckPanel from "@/components/PermissionCheckPanel";
+import HistoryPanel from "@/components/HistoryPanel";
 import { approveReview, createReview, rejectReview } from "@/lib/api";
 import { ReviewRun } from "@/lib/types";
 
@@ -17,12 +19,14 @@ export default function Home() {
   const [run, setRun] = useState<ReviewRun | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [historyRefresh, setHistoryRefresh] = useState(0);
 
   const handleSubmit = async (text: string) => {
     setLoading(true);
     setRun(null);
     try {
       setRun(await createReview(text));
+      setHistoryRefresh((n) => n + 1);
     } finally {
       setLoading(false);
     }
@@ -33,6 +37,7 @@ export default function Home() {
     setBusy(true);
     try {
       setRun(await approveReview(run.id));
+      setHistoryRefresh((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -43,6 +48,7 @@ export default function Home() {
     setBusy(true);
     try {
       setRun(await rejectReview(run.id));
+      setHistoryRefresh((n) => n + 1);
     } finally {
       setBusy(false);
     }
@@ -77,6 +83,11 @@ export default function Home() {
           <ApprovalPanel run={run} onApprove={handleApprove} onReject={handleReject} busy={busy} />
         </>
       )}
+
+      <div className="space-y-4 border-t border-gray-200 bg-gray-50 p-6">
+        <PermissionCheckPanel />
+        <HistoryPanel refreshKey={historyRefresh} />
+      </div>
     </main>
   );
 }

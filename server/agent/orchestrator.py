@@ -100,6 +100,24 @@ class Orchestrator:
         self.cloudtrail = cloudtrail
         self.simulator = simulator
         self.trueforge = trueforge
+        # Per-instance caches (a fresh Orchestrator is built per API request —
+        # see server/main.py — so this never leaks state across requests).
+        # Avoids re-fetching the same role/CloudTrail history twice when a
+        # managed policy shared by several roles is checked more than once.
+        self._role_cache: dict[str, Role] = {}
+        self._events_cache: dict[tuple[str, int], list[HistoricalEvent]] = {}
+        self._trueforge_broken = False
+
+    def _get_role_cached(self, role_name: str) -> Role:
+        if role_name not in self._role_cache:
+            self._role_cache[role_name] = self.iam.get_role(role_name)
+        return self._role_cache[role_name]
+
+    def _get_events_cached(self, run: ReviewRun, role: Role, lookback_days: int) -> list[HistoricalEvent]:
+        key = (role.name, lookback_days)
+        if key not in self._events_cache:
+            self._events_cache[key] = self.retrieve_events(run, role, lookback_days)
+        return self._events_cache[key]
 
     # ---------------- UNDERSTAND ----------------
 
@@ -140,18 +158,34 @@ class Orchestrator:
 
         import fnmatch
 
-        def excluded(name: str) -> bool:
-            return any(fnmatch.fnmatch(name.lower(), p.lower()) for p in understood.exclude_role_patterns)
+        # Service-linked roles are managed by AWS itself and are always
+        # excluded, regardless of what the user asked for — Blast Radius
+        # never touches them, the same way it never touches iam:PassRole.
+        always_excluded_patterns = ["aws-service-role/*", "AWSServiceRoleFor*"]
+
+        def excluded(name: str, path: str) -> bool:
+            patterns = understood.exclude_role_patterns + always_excluded_patterns
+            return path.startswith("/aws-service-role/") or any(fnmatch.fnmatch(name.lower(), p.lower()) for p in patterns)
 
         roles: list[Role] = []
+        skipped_service_linked = 0
         for raw in raw_roles:
             name = raw["RoleName"]
-            if excluded(name):
+            if excluded(name, raw.get("Path", "/")):
+                if raw.get("Path", "/").startswith("/aws-service-role/"):
+                    skipped_service_linked += 1
                 continue
             roles.append(self.iam.get_role(name))
+        if skipped_service_linked:
+            run.log(
+                "Skipped AWS service-linked roles",
+                f"{skipped_service_linked} role(s) excluded — always excluded by design",
+                kind="info",
+            )
         run.log("Retrieved role policies", f"{len(roles)} role(s) after exclusions", kind="success")
         for role in roles:
             run.role_snapshot[role.name] = role
+            self._role_cache[role.name] = role
         return roles
 
     def retrieve_events(self, run: ReviewRun, role: Role, lookback_days: int) -> list[HistoricalEvent]:
@@ -185,11 +219,82 @@ class Orchestrator:
             hypothetical = remove_action(all_stmts, candidate.action)
             local_verdicts = self._sandbox_replay(run, candidate, all_stmts, events)
             result = self._validate(run, candidate, hypothetical, events, local_verdicts)
+            result = self._extend_across_shared_attachments(run, candidate, result, understood)
             results.append(result)
         return results
 
+    def _extend_across_shared_attachments(
+        self, run: ReviewRun, candidate, primary_result: BlastRadiusResult, understood: UnderstoodRequest
+    ) -> BlastRadiusResult:
+        """
+        A customer-managed policy's `revoke_actions()` rewrites the policy's
+        default VERSION — which changes what EVERY role/user/group it's
+        attached to can do, not just the role currently being reviewed. Before
+        ever calling such a permission safe, replay it against every OTHER
+        attached role's own CloudTrail history too, using each role's own full
+        statement set (not just the shared policy's). A permission is only
+        safe across the board if it's independently safe for every attachment.
+        """
+        policy = candidate.source_policy
+        if policy.kind != "managed" or not policy.arn or self.iam is None:
+            return primary_result
+
+        try:
+            attachments = self.iam.list_policy_attachments(policy.arn)
+        except IamError as e:
+            run.log(f"Could not list attachments for shared policy '{policy.name}'", str(e), kind="warn")
+            return primary_result
+
+        other_roles = [r for r in attachments.get("roles", []) if r != candidate.role_name]
+        if not other_roles:
+            return primary_result
+
+        candidate.shared_with_roles = other_roles
+        run.log(
+            f"Policy '{policy.name}' is shared",
+            f"Also attached to {', '.join(other_roles)} — checking blast radius against all of them.",
+            kind="info",
+        )
+
+        combined_checked = primary_result.events_checked
+        combined_agreement = primary_result.validator_agreement
+        combined_safe = primary_result.safe_to_remove
+        combined_broken = list(primary_result.broken_events)
+
+        for other_name in other_roles:
+            try:
+                other_role = self._get_role_cached(other_name)
+                other_events = self._get_events_cached(run, other_role, understood.lookback_days)
+            except IamError as e:
+                run.log(f"Could not check shared attachment '{other_name}'", str(e), kind="error")
+                combined_safe = False  # fail closed: an attachment we couldn't verify is never "safe"
+                continue
+            other_stmts = _all_statements(other_role)
+            other_local = self._sandbox_replay(run, candidate, other_stmts, other_events)
+            other_hyp = remove_action(other_stmts, candidate.action)
+            other_result = self._validate(run, candidate, other_hyp, other_events, other_local)
+            combined_checked += other_result.events_checked
+            combined_agreement = combined_agreement and other_result.validator_agreement
+            combined_safe = combined_safe and other_result.safe_to_remove
+            combined_broken += other_result.broken_events
+
+        return BlastRadiusResult(
+            candidate=candidate,
+            events_checked=combined_checked,
+            verdicts=primary_result.verdicts,
+            validator_agreement=combined_agreement,
+            safe_to_remove=combined_safe,
+            broken_events=combined_broken,
+        )
+
     def _sandbox_replay(self, run: ReviewRun, candidate, all_stmts, events) -> list[dict]:
-        if self.trueforge is not None:
+        # Once TrueForge has failed once in this run (e.g. the agent isn't
+        # registered yet, or no sandbox provider is configured), stop retrying
+        # it for every subsequent candidate — that turns an O(1) failure into
+        # an O(candidates) one, adding several seconds per candidate for no
+        # benefit. A fresh Orchestrator is built per API request (see
+        # server/main.py), so this never suppresses a retry across requests.
+        if self.trueforge is not None and not self._trueforge_broken:
             try:
                 script = render_sandbox_script(candidate, all_stmts, events)
                 stdout = self.trueforge.exec_python(script)  # type: ignore[attr-defined]
@@ -201,15 +306,27 @@ class Orchestrator:
                 if m:
                     return json.loads(m.group(1))["verdicts"]
             except TrueForgeUnavailable as e:
-                run.log("TrueForge sandbox unavailable", f"{e} — replaying locally instead.", kind="warn")
+                self._trueforge_broken = True
+                run.log(
+                    "TrueForge sandbox unavailable",
+                    f"{e} — replaying locally instead for the rest of this review.",
+                    kind="warn",
+                )
         return run_local_replay(candidate, all_stmts, events)
 
     def _validate(self, run: ReviewRun, candidate, hypothetical, events, local_verdicts) -> BlastRadiusResult:
         simulator = self.simulator
+        # A candidate with zero matching historical events never actually calls
+        # the AWS API (nothing to simulate_batch) — its trivial success must not
+        # be allowed to overwrite an earlier candidate's real fallback flag with
+        # a claim that real AWS validated this run, when it didn't for at least
+        # one candidate. Once "reference (demo mode)" is set, it stays set.
+        would_call_real_aws = bool(local_verdicts) and simulator is not None
         if simulator is not None:
             try:
                 result = validate_candidate(candidate, hypothetical, events, local_verdicts, simulator)
-                run.validator_source = "aws"
+                if would_call_real_aws and run.validator_source != "reference (demo mode)":
+                    run.validator_source = "aws"
                 return result
             except Exception as e:
                 # Covers moto's NotImplementedError (in-process mock_aws), moto_server's
@@ -235,7 +352,7 @@ class Orchestrator:
             roles = self.retrieve(run, understood)
             all_results: list[BlastRadiusResult] = []
             for role in roles:
-                events = self.retrieve_events(run, role, understood.lookback_days)
+                events = self._get_events_cached(run, role, understood.lookback_days)
                 all_results.extend(self.review_role(run, role, events, understood))
             run.results = all_results
 
@@ -262,6 +379,60 @@ class Orchestrator:
             run.log("Unexpected error", str(e), kind="error")
         return run
 
+    # ---------------- standalone check (read-only, no ReviewRun needed) ----------------
+
+    def check_permission(self, role_name: str, action: str, lookback_days: int = 90) -> dict:
+        """
+        Answer "what would removing this ONE permission do?" directly,
+        without running a full review or requiring approval — this never
+        writes anything, so there is nothing to gate. Reuses the exact same
+        replay + independent-validation + shared-policy logic as a full
+        review. Useful for a quick sanity check before deciding whether to
+        even run a full account sweep, or for spot-checking a permission a
+        human is already suspicious of.
+        """
+        if self.iam is None:
+            raise IamUnavailable("AWS IAM is not configured.")
+
+        scratch = ReviewRun(id="scratch", request_text=f"check {action} on {role_name}")
+        role = self.iam.get_role(role_name)
+        self._role_cache[role.name] = role
+        events = self._get_events_cached(scratch, role, lookback_days)
+
+        all_stmts = _all_statements(role)
+        source_policy = next((p for p in role.policies for s in p.statements if action in s.actions), None)
+        if source_policy is None:
+            return {
+                "role_name": role_name,
+                "action": action,
+                "granted": False,
+                "message": f"'{action}' is not granted to '{role_name}' by any literal statement (it may only be reachable via a wildcard grant, which this tool never proposes removing).",
+            }
+
+        from blast_radius.model import CandidatePermission
+        from blast_radius.risk import severity_for_action
+
+        last_used = max((e.event_time for e in events if e.action == action), default=None)
+        candidate = CandidatePermission(
+            role_name=role_name,
+            action=action,
+            source_policy=source_policy,
+            last_accessed=last_used,
+            reason="explicit check" if last_used else "explicit check — no historical use found",
+            severity=severity_for_action(action),
+        )
+        hypothetical = remove_action(all_stmts, action)
+        local_verdicts = self._sandbox_replay(scratch, candidate, all_stmts, events)
+        result = self._validate(scratch, candidate, hypothetical, events, local_verdicts)
+        result = self._extend_across_shared_attachments(
+            scratch, candidate, result, UnderstoodRequest(role_name=role_name, role_prefix=None, lookback_days=lookback_days)
+        )
+        d = result.to_dict()
+        d["granted"] = True
+        d["validator_source"] = scratch.validator_source
+        d["timeline"] = [e.to_dict() for e in scratch.timeline]
+        return d
+
     # ---------------- APPROVAL / REJECTION ----------------
 
     def reject(self, run: ReviewRun) -> None:
@@ -287,28 +458,45 @@ class Orchestrator:
             return
 
         safe = [r for r in run.results if r.safe_to_remove]
-        # Group by (role, policy) so each policy is rewritten exactly once.
+        # Group by policy, not by (role, policy): a managed policy shared
+        # across roles must be rewritten exactly ONCE (its ARN identifies it
+        # regardless of which role's review found the candidate) — calling
+        # revoke_actions twice for the same managed policy would needlessly
+        # burn one of IAM's 5 policy-version slots and could race with itself.
+        # Inline policies are still keyed per (role, policy name), since each
+        # role's inline policy is a distinct document.
         groups: dict[tuple, list[str]] = {}
         policy_refs: dict[tuple, AttachedPolicy] = {}
+        affected_roles: dict[tuple, set[str]] = {}
         for r in safe:
-            key = (r.candidate.role_name, r.candidate.source_policy.name)
+            policy = r.candidate.source_policy
+            key = ("managed", policy.arn) if policy.kind == "managed" else ("inline", r.candidate.role_name, policy.name)
             groups.setdefault(key, []).append(r.candidate.action)
-            policy_refs[key] = r.candidate.source_policy
+            policy_refs[key] = policy
+            affected_roles.setdefault(key, set()).add(r.candidate.role_name)
+            for shared in r.candidate.shared_with_roles:
+                affected_roles[key].add(shared)
 
         committed_roles: set[str] = set()
         try:
-            for (role_name, policy_name), actions in groups.items():
-                policy = policy_refs[(role_name, policy_name)]
+            for key, actions in groups.items():
+                policy = policy_refs[key]
+                # role_name is only meaningful for inline policies (see
+                # AwsIamClient.revoke_actions — the managed-policy branch keys
+                # entirely off policy_arn); pass any one affected role for the
+                # inline case, since exactly one owns that inline policy.
+                any_role = next(iter(affected_roles[key]))
                 self.iam.revoke_actions(
-                    role_name=role_name,
-                    policy_name=policy_name,
+                    role_name=any_role,
+                    policy_name=policy.name,
                     policy_kind=policy.kind,
                     policy_arn=policy.arn,
-                    actions_to_remove=actions,
+                    actions_to_remove=list(dict.fromkeys(actions)),  # dedupe, keep order
                 )
-                committed_roles.add(role_name)
+                committed_roles |= affected_roles[key]
                 run.log(
-                    f"Updated policy '{policy_name}' on role {role_name}",
+                    f"Updated policy '{policy.name}'"
+                    + (f" (shared by {len(affected_roles[key])} roles)" if len(affected_roles[key]) > 1 else f" on role {any_role}"),
                     f"Removed: {', '.join(actions)}",
                     kind="success",
                 )
@@ -320,23 +508,23 @@ class Orchestrator:
 
         run.status = "committed"
         run.log("Re-reading AWS IAM", "Verifying committed changes...", kind="info")
-        self._verify(run, committed_roles, groups)
+        self._verify(run, committed_roles, groups, affected_roles)
 
-    def _verify(self, run: ReviewRun, committed_roles: set[str], groups: dict[tuple, list[str]]) -> None:
+    def _verify(
+        self, run: ReviewRun, committed_roles: set[str], groups: dict[tuple, list[str]], affected_roles: dict[tuple, set[str]]
+    ) -> None:
         mismatches = []
-        for role_name in committed_roles:
-            fresh = self.iam.get_role(role_name)
-            all_current_actions = {a for p in fresh.policies for s in p.statements for a in s.actions}
-            for (r_name, p_name), actions in groups.items():
-                if r_name != role_name:
-                    continue
+        for key, actions in groups.items():
+            for role_name in affected_roles[key]:
+                fresh = self.iam.get_role(role_name)
+                all_current_actions = {a for p in fresh.policies for s in p.statements for a in s.actions}
                 for action in actions:
                     if action in all_current_actions:
                         mismatches.append({"role": role_name, "action": action, "issue": "still present after revoke"})
 
         run.verify_result = {
             "roles_updated": len(committed_roles),
-            "permissions_removed": sum(len(a) for a in groups.values()),
+            "permissions_removed": sum(len(set(a)) for a in groups.values()),
             "mismatches": mismatches,
             "verified": not mismatches,
         }

@@ -62,6 +62,12 @@ Two things about the harness matter here, exactly as they did for this team's ea
 1. **Sandbox execution is enforced by the harness, not by agent discipline.** The replay script (`blast_radius/sandbox_code.py`) that decides whether a historical call would still succeed runs in an isolated sandbox with zero AWS credentials and no network access — it can compute, and nothing else.
 2. **Approval is enforced by the harness, not by a prompt instruction.** `agent/blast-radius.agent.json` lists `revoke_permissions` under `require_approval_for_tools`. TrueForge pauses the turn and waits for an explicit `user.tool_approval` event before that tool can run.
 
+For the full detail on this — split across three pages so implementation, wiring, and how-to-run-it don't get tangled together — see:
+
+- **[docs/trueforge-implementation.md](docs/trueforge-implementation.md)** — the actual client code that talks to TrueForge (`server/agent/trueforge_client.py`), how sandbox execution is driven end to end, and what's genuinely verified vs. best-effort.
+- **[docs/trueforge-integration.md](docs/trueforge-integration.md)** — how Blast Radius is wired *into* TrueForge: the agent manifest, the MCP tool layer, the approval gate, and fallback behavior when any piece isn't configured.
+- **[docs/trueforge-setup.md](docs/trueforge-setup.md)** — step-by-step instructions to actually run it on a live TrueForge instance, plus a troubleshooting table from real issues hit while building this.
+
 ## Sandbox security
 
 The sandbox that replays historical events has no `AWS_ACCESS_KEY_ID`, no AWS SDK network access, and no ability to call `revoke_permissions` (that tool lives on the MCP server, not in the sandbox). It reads a JSON export of the policy and the historical event log, computes, and prints JSON — nothing else.

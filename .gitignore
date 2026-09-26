@@ -12,4 +12,5 @@ node_modules/
 out/
 dist/
 *.log
+server/data/blast_radius_history.sqlite3
 .DS_Store
