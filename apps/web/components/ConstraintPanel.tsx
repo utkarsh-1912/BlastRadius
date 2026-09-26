@@ -1,5 +1,6 @@
 import { Understood } from "@/lib/types";
 import { Card, CardHeader, CardTitle, CardBody } from "@/components/ui/Card";
+import Badge from "@/components/ui/Badge";
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -19,7 +20,19 @@ export default function ConstraintPanel({ understood }: { understood: Understood
       <CardBody>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Role" value={understood.role_name ?? understood.role_prefix ?? "all roles"} />
-          <Field label="Lookback window" value={`${understood.lookback_days} days`} />
+          <Field
+            label="Lookback window"
+            value={
+              understood.lookback_capped ? (
+                <span className="flex items-center gap-2">
+                  {understood.lookback_days} days
+                  <Badge tone="warning">capped from {understood.requested_lookback_days}</Badge>
+                </span>
+              ) : (
+                `${understood.lookback_days} days`
+              )
+            }
+          />
           <Field label="Excluded actions" value={understood.exclude_actions.length ? understood.exclude_actions.join(", ") : "none"} />
           <Field
             label="Excluded roles"
@@ -28,6 +41,8 @@ export default function ConstraintPanel({ understood }: { understood: Understood
         </div>
         <p className="mt-4 border-t border-slate-100 pt-3 text-xs text-slate-400">
           Only literal, unused actions are ever proposed — wildcard grants (e.g. <code>s3:*</code>) are never touched.
+          Lookback is capped at 90 days: AWS CloudTrail's default Event History doesn&rsquo;t retain further back
+          than that without a dedicated Trail or CloudTrail Lake.
         </p>
       </CardBody>
     </Card>

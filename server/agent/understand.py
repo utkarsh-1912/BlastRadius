@@ -13,20 +13,35 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
+# AWS CloudTrail's `LookupEvents` API (aws_integration/cloudtrail.py:CloudTrailSource)
+# only returns management events from the last 90 days without a configured
+# Trail/CloudTrail Lake — asking for more than that cannot actually be honored
+# against real AWS, so a request is capped here rather than silently returning
+# a shorter history than the user thinks they asked for.
+MAX_LOOKBACK_DAYS = 90
+
+
 @dataclass
 class UnderstoodRequest:
     role_name: Optional[str]
     role_prefix: Optional[str]
     lookback_days: int = 90
+    requested_lookback_days: Optional[int] = None  # set only when the user asked for more than the cap
     exclude_actions: set[str] = field(default_factory=set)
     exclude_role_patterns: list[str] = field(default_factory=list)
     raw_request: str = ""
+
+    @property
+    def lookback_capped(self) -> bool:
+        return self.requested_lookback_days is not None and self.requested_lookback_days > self.lookback_days
 
     def to_dict(self) -> dict:
         return {
             "role_name": self.role_name,
             "role_prefix": self.role_prefix,
             "lookback_days": self.lookback_days,
+            "requested_lookback_days": self.requested_lookback_days,
+            "lookback_capped": self.lookback_capped,
             "exclude_actions": sorted(self.exclude_actions),
             "exclude_role_patterns": self.exclude_role_patterns,
         }
@@ -58,10 +73,16 @@ def understand_heuristic(request: str) -> UnderstoodRequest:
     if m3:
         role_prefix = m3.group(1)
 
-    lookback_days = 90
+    lookback_days = MAX_LOOKBACK_DAYS
+    requested_lookback_days = None
     m4 = re.search(r"(\d+)\s*-?\s*days?", lower)
     if m4:
-        lookback_days = int(m4.group(1))
+        requested = int(m4.group(1))
+        if requested > MAX_LOOKBACK_DAYS:
+            requested_lookback_days = requested
+            lookback_days = MAX_LOOKBACK_DAYS
+        elif requested > 0:
+            lookback_days = requested
 
     exclude_actions = set(_DEFAULT_EXCLUDED_ACTIONS)
 
@@ -76,6 +97,7 @@ def understand_heuristic(request: str) -> UnderstoodRequest:
         role_name=role_name,
         role_prefix=role_prefix,
         lookback_days=lookback_days,
+        requested_lookback_days=requested_lookback_days,
         exclude_actions=exclude_actions,
         exclude_role_patterns=exclude_role_patterns,
         raw_request=request,

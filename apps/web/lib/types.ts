@@ -49,6 +49,8 @@ export interface Understood {
   role_name: string | null;
   role_prefix: string | null;
   lookback_days: number;
+  requested_lookback_days: number | null;
+  lookback_capped: boolean;
   exclude_actions: string[];
   exclude_role_patterns: string[];
 }

@@ -35,6 +35,7 @@ _SERVER_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "server")
 sys.path.insert(0, os.path.abspath(_SERVER_DIR))
 
 from env_utils import clean_blank_env  # noqa: E402
+from agent.understand import MAX_LOOKBACK_DAYS  # noqa: E402
 from aws_integration.client import AwsIamClient, IamError  # noqa: E402
 from aws_integration.cloudtrail import CloudTrailSource, DemoCloudTrailSource  # noqa: E402
 from aws_integration.simulate import AwsPolicySimulator  # noqa: E402
@@ -98,20 +99,27 @@ def get_role_policies(role_name: str) -> dict:
 
 
 @mcp.tool()
-def get_cloudtrail_history(role_name: str, lookback_days: int = 90) -> list[dict]:
+def get_cloudtrail_history(role_name: str, lookback_days: int = MAX_LOOKBACK_DAYS) -> list[dict]:
     """Fetch this role's real historical API calls (CloudTrail), or a labeled
-    demo export if CloudTrail history isn't configured for this account."""
+    demo export if CloudTrail history isn't configured for this account.
+    lookback_days is capped at 90 — AWS CloudTrail's default Event History
+    only retains the last 90 days of management events without a dedicated
+    Trail or CloudTrail Lake configured; asking for more cannot be honored
+    against real AWS, so a request beyond that is silently capped here."""
     role = _iam.get_role(role_name)
-    events = _cloudtrail.lookup_events_for_principal(role.arn, lookback_days=lookback_days)
+    capped = min(lookback_days, MAX_LOOKBACK_DAYS)
+    events = _cloudtrail.lookup_events_for_principal(role.arn, lookback_days=capped)
     return [{"event_time": e.event_time.isoformat(), "action": e.action, "resource_arns": e.resource_arns} for e in events]
 
 
 @mcp.tool()
-def find_unused_permissions(role_name: str, lookback_days: int = 90, exclude_actions: Optional[list[str]] = None) -> list[dict]:
+def find_unused_permissions(role_name: str, lookback_days: int = MAX_LOOKBACK_DAYS, exclude_actions: Optional[list[str]] = None) -> list[dict]:
     """Identify literal (non-wildcard) permissions granted to a role that do
-    not appear in its CloudTrail history within the lookback window."""
+    not appear in its CloudTrail history within the lookback window.
+    lookback_days is capped at 90 for the same reason as get_cloudtrail_history."""
+    lookback_days = min(lookback_days, MAX_LOOKBACK_DAYS)
     role = _iam.get_role(role_name)
-    events = _cloudtrail.lookup_events_for_principal(role.arn, lookback_days=max(lookback_days, 90))
+    events = _cloudtrail.lookup_events_for_principal(role.arn, lookback_days=max(lookback_days, MAX_LOOKBACK_DAYS))
     candidates = find_candidates(role, events, lookback_days, set(exclude_actions or []))
     return [
         {"action": c.action, "source_policy": c.source_policy.name, "reason": c.reason, "last_accessed": c.last_accessed.isoformat() if c.last_accessed else None}

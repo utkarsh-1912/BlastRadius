@@ -131,6 +131,14 @@ class Orchestrator:
             f"{len(u.exclude_role_patterns)} role exclusion pattern(s)",
             kind="success",
         )
+        if u.lookback_capped:
+            run.log(
+                f"Requested {u.requested_lookback_days} days, capped to {u.lookback_days}",
+                "AWS CloudTrail's default Event History only retains the last 90 days of management "
+                "events without a dedicated Trail or CloudTrail Lake configured — the lookback window "
+                "can't honestly go further back than that against real AWS.",
+                kind="warn",
+            )
         return u
 
     # ---------------- RETRIEVE ----------------
