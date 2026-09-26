@@ -48,12 +48,13 @@ Both look identical to a recency-based tool. Only a replay against real history 
                                                   credentials)        for a live demo)
 ```
 
-- **`server/blast_radius/`** — the deterministic core: a from-scratch IAM policy evaluator (`local_evaluator.py`, no AWS SDK, no credentials — this is what runs in the TrueForge sandbox), candidate identification (`candidates.py`), the replay simulator (`simulator.py`), a second, differently-implemented evaluator used only as a demo-mode fallback (`reference_evaluator.py`), and the independent validator (`validator.py`) that requires both evaluators to agree.
-- **`server/aws_integration/`** — a small, controlled AWS client: `client.py` (IAM reads + the one gated write), `cloudtrail.py` (real CloudTrail lookups, or a clearly-labeled demo export for brand-new accounts), `simulate.py` (the real `iam:SimulateCustomPolicy` cross-check).
-- **`server/agent/orchestrator.py`** — UNDERSTAND → RETRIEVE → IDENTIFY CANDIDATES → SANDBOX SIMULATE → VALIDATE → EXPLAIN → STOP → APPROVE → COMMIT → VERIFY. The only module allowed to call the write path, and only when a run's status is `awaiting_approval`.
+- **`server/blast_radius/`** — the deterministic core: a from-scratch IAM policy evaluator (`local_evaluator.py`, no AWS SDK, no credentials — this is what runs in the TrueForge sandbox), candidate identification (`candidates.py`), risk-tier prioritization (`risk.py`), the replay simulator (`simulator.py`), a second, differently-implemented evaluator used only as a demo-mode fallback (`reference_evaluator.py`), and the independent validator (`validator.py`) that requires both evaluators to agree.
+- **`server/aws_integration/`** — a small, controlled AWS client: `client.py` (IAM reads + the one gated write, plus shared-policy attachment lookups), `cloudtrail.py` (real CloudTrail lookups, or a clearly-labeled demo export for brand-new accounts), `simulate.py` (the real `iam:SimulateCustomPolicy` cross-check).
+- **`server/agent/orchestrator.py`** — UNDERSTAND → RETRIEVE → IDENTIFY CANDIDATES → SANDBOX SIMULATE → VALIDATE → EXPLAIN → STOP → APPROVE → COMMIT → VERIFY. The only module allowed to call the write path, and only when a run's status is `awaiting_approval`. Also handles cross-role blast radius for shared managed policies, and a standalone single-permission check (`check_permission()`).
+- **`server/agent/store.py`** — a small SQLite-backed audit trail of past reviews, surviving API restarts.
 - **`integrations/aws-iam-mcp/`** — the actual MCP server TrueForge calls ("Blast Radius AWS IAM Tool Layer"). Seven tools, one of them (`revoke_permissions`) gated by TrueForge's own approval mechanism.
 - **`agent/blast-radius.agent.json`** — the TrueForge agent manifest: model, the gated MCP write tool, sandbox on.
-- **`apps/web/`** — the Next.js dashboard: request input, live agent timeline, safe-vs-flagged results table, validation stats, and the approve/reject gate.
+- **`apps/web/`** — the Next.js dashboard: request input, live agent timeline, safe-vs-flagged results table (with severity badges and CSV export), a standalone permission-check panel, review history, validation stats, and the approve/reject gate.
 
 ## Why TrueForge
 
@@ -78,6 +79,7 @@ The sandbox that replays historical events has no `AWS_ACCESS_KEY_ID`, no AWS SD
 - `commit_and_verify()` (`server/agent/orchestrator.py`) refuses to run unless the run's status is `awaiting_approval`; the only caller is `POST /api/review/{id}/approve`, which only fires on the dashboard's **Approve & Revoke** button.
 - On the TrueForge side, the same gate exists independently via `require_approval_for_tools`.
 - `tests/test_no_revoke_before_approval.py` runs the full pipeline against a moto-mocked AWS account and asserts zero IAM writes happened before an explicit approve, then verifies a real approve → commit → verify cycle actually mutates and re-reads IAM state.
+- A customer-managed policy shared across roles gets the same guarantee extended: `tests/test_shared_policy.py` proves a permission that looks unused on one role, but is still used by another role sharing the same policy, is correctly excluded — even though a single-role review would have missed it.
 
 ## Setup
 
@@ -114,6 +116,8 @@ python integrations/aws-iam-mcp/server.py # in another
 python scripts/setup_trueforge.py         # registers model, sandbox, MCP server, agent
 ```
 
+TrueForge doesn't run natively on Windows — if you're on Windows, do this (and the rest of the stack) inside WSL Ubuntu. See [docs/trueforge-setup.md](docs/trueforge-setup.md) for the full walkthrough.
+
 ### 4. Run the app
 
 ```bash
@@ -136,7 +140,7 @@ cd server
 python -m pytest -q
 ```
 
-29 tests, all against real code paths (moto for AWS, no live account needed to run them): the local policy evaluator (wildcards, explicit-deny-wins, fail-closed on Conditions), candidate identification, the independent validator's agree/disagree logic (including a fail-closed disagreement test), a second reference evaluator's parity with the first, real IAM read/write behavior, and — most importantly — `test_no_revoke_before_approval.py`, which proves no AWS IAM write ever happens before an explicit human approval, then exercises a full approve → commit → verify cycle against a real (moto-backed) IAM policy.
+47 tests, all against real code paths (moto for AWS, no live account needed to run them): the local policy evaluator (wildcards, explicit-deny-wins, fail-closed on Conditions), candidate identification, risk-tier classification, the independent validator's agree/disagree logic (including a fail-closed disagreement test), a second reference evaluator's parity with the first, real IAM read/write behavior, cross-role blast radius for shared managed policies, the standalone permission-check path, the audit-history store, and — most importantly — `test_no_revoke_before_approval.py`, which proves no AWS IAM write ever happens before an explicit human approval, then exercises a full approve → commit → verify cycle against a real (moto-backed) IAM policy.
 
 ## AI disclosure
 
@@ -145,5 +149,3 @@ This repository's code, tests, and documentation were written with Claude (Anthr
 ## Future research
 
 `ReferenceEvaluator` is written independently enough from `local_evaluator.py` that a three-way check (local + reference + real AWS) is a natural extension — running all three even when a real AWS account is available, rather than only two, for a stronger agreement guarantee. Other natural extensions: resource-level (not just action-level) blast radius for wildcard grants, cross-account role assumption chains, and a scheduled/recurring review mode.
-#   B l a s t R a d i u s  
- 
