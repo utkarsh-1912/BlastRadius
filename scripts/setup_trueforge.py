@@ -153,14 +153,34 @@ def main() -> int:
         had_failure = True
 
     # ---------- 4. agent ----------
+    # TrueForge's `skills` field expects a skill already registered via
+    # PUT /settings/skills (a git-backed manifest) -- we don't register any,
+    # so instead of listing them under manifest.skills (which 422s with
+    # "Unknown skill ... not configured"), inline each skill file's content
+    # straight into the agent's instructions. Same workaround the reference
+    # `dress-rehearsal` hackathon project's setup script uses, and for the
+    # same reason it gives: this also skips the extra agent turns it would
+    # otherwise cost to read SKILL.md through the sandbox at runtime.
     if fqn:
         agent_path = os.path.join(REPO_ROOT, "agent", "blast-radius.agent.json")
         with open(agent_path, "r", encoding="utf-8") as f:
             raw = f.read().replace("${MODEL_FQN}", fqn)
         spec = json.loads(raw)
+        manifest = spec["manifest"]
+        skills = manifest.pop("skills", [])
+        for sk in skills:
+            skill_path = os.path.join(REPO_ROOT, "agent", "skills", f"{sk['name']}.md")
+            if not os.path.exists(skill_path):
+                warn(f"skill file not found, skipping: {skill_path}")
+                continue
+            with open(skill_path, "r", encoding="utf-8") as sf:
+                body = re.sub(r"^---[\s\S]*?---\s*", "", sf.read())  # strip frontmatter
+            manifest["instructions"] = (
+                f"{manifest.get('instructions', '')}\n\n## Skill \"{sk['name']}\" (inlined)\n\n{body}"
+            )
         try:
-            tf.create_or_update_agent(spec["name"], spec["description"], spec["manifest"])
-            ok(f"agent: {spec['name']} registered (model {fqn})")
+            tf.create_or_update_agent(spec["name"], spec["description"], manifest)
+            ok(f"agent: {spec['name']} registered (model {fqn}, {len(skills)} skill(s) inlined)")
         except (TrueForgeError, TrueForgeUnavailable) as e:
             fail(f"agent: {e}")
             had_failure = True
