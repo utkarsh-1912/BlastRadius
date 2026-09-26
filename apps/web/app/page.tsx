@@ -1,93 +1,41 @@
 "use client";
 
 import { useState } from "react";
-import ProjectHeader from "@/components/ProjectHeader";
+import { useRouter } from "next/navigation";
 import ChatPanel from "@/components/ChatPanel";
-import AgentTimeline from "@/components/AgentTimeline";
-import ScheduleDiff from "@/components/ScheduleDiff";
-import ConstraintPanel from "@/components/ConstraintPanel";
-import ValidationPanel from "@/components/ValidationPanel";
-import ApprovalPanel from "@/components/ApprovalPanel";
-import PermissionCheckPanel from "@/components/PermissionCheckPanel";
-import HistoryPanel from "@/components/HistoryPanel";
-import { approveReview, createReview, rejectReview } from "@/lib/api";
-import { ReviewRun } from "@/lib/types";
+import { createReview } from "@/lib/api";
 
 const DEMO_REQUEST = "Review IAM access for the data-pipeline-role role over the last 90 days.";
 
 export default function Home() {
-  const [run, setRun] = useState<ReviewRun | null>(null);
+  const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (text: string) => {
     setLoading(true);
-    setRun(null);
+    setError(null);
     try {
-      setRun(await createReview(text));
-      setHistoryRefresh((n) => n + 1);
-    } finally {
+      const run = await createReview(text);
+      router.push(`/reviews/${run.id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
       setLoading(false);
     }
   };
 
-  const handleApprove = async () => {
-    if (!run) return;
-    setBusy(true);
-    try {
-      setRun(await approveReview(run.id));
-      setHistoryRefresh((n) => n + 1);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!run) return;
-    setBusy(true);
-    try {
-      setRun(await rejectReview(run.id));
-      setHistoryRefresh((n) => n + 1);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col">
-      <ProjectHeader roleName={run?.understood?.role_name} validatorSource={run?.validator_source} />
+    <main className="flex flex-col">
+      <section className="px-6 pb-2 pt-8">
+        <h1 className="text-xl font-semibold text-gray-900">Start a Blast Radius Review</h1>
+        <p className="mt-1 max-w-2xl text-sm text-gray-500">
+          Describe which role (or roles) to review. Blast Radius reads the real IAM policy and CloudTrail
+          history, replays every candidate permission through two independent evaluators, and stops for your
+          approval before anything is revoked.
+        </p>
+      </section>
       <ChatPanel onSubmit={handleSubmit} disabled={loading} defaultValue={DEMO_REQUEST} />
-
-      {run && (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-[320px_1fr]">
-            <AgentTimeline events={run.timeline} />
-            <div className="bg-gray-50 p-6">
-              {run.understood && <ConstraintPanel understood={run.understood} />}
-            </div>
-          </div>
-
-          {(run.safe_changes.length > 0 || run.unsafe_candidates.length > 0) && (
-            <ScheduleDiff safe={run.safe_changes} unsafe={run.unsafe_candidates} />
-          )}
-          {run.total_candidates > 0 && (
-            <ValidationPanel
-              totalCandidates={run.total_candidates}
-              safeCount={run.safe_changes.length}
-              unsafeCount={run.unsafe_candidates.length}
-              validatorSource={run.validator_source}
-              sandboxUsed={run.sandbox_used}
-            />
-          )}
-          <ApprovalPanel run={run} onApprove={handleApprove} onReject={handleReject} busy={busy} />
-        </>
-      )}
-
-      <div className="space-y-4 border-t border-gray-200 bg-gray-50 p-6">
-        <PermissionCheckPanel />
-        <HistoryPanel refreshKey={historyRefresh} />
-      </div>
+      {error && <p className="px-6 py-3 text-sm text-accent">{error}</p>}
     </main>
   );
 }

@@ -27,10 +27,6 @@ export default function PermissionCheckPanel() {
 
   return (
     <section className="rounded-md border border-gray-200 bg-white p-5">
-      <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Check a Single Permission</h2>
-      <p className="mb-3 text-xs text-gray-400">
-        A quick, read-only spot-check — no review, no approval needed, because this never writes anything.
-      </p>
       <div className="flex flex-wrap gap-2">
         <input
           className="min-w-[160px] flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
