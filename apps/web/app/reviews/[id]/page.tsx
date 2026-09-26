@@ -17,20 +17,24 @@ export default function ReviewDetailPage() {
   const [run, setRun] = useState<ReviewRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     getReview(params.id)
       .then(setRun)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, [params.id]);
 
   const handleApprove = async () => {
     if (!run) return;
     setBusy(true);
+    setActionError(null);
     try {
       setRun(await approveReview(run.id));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -39,8 +43,11 @@ export default function ReviewDetailPage() {
   const handleReject = async () => {
     if (!run) return;
     setBusy(true);
+    setActionError(null);
     try {
       setRun(await rejectReview(run.id));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -50,10 +57,10 @@ export default function ReviewDetailPage() {
     return <p className="p-6 text-sm text-gray-400">Loading review…</p>;
   }
 
-  if (error || !run) {
+  if (loadError || !run) {
     return (
       <div className="p-6">
-        <p className="text-sm text-accent">{error ?? "Review not found."}</p>
+        <p className="text-sm text-accent">{loadError ?? "Review not found."}</p>
         <Link href="/" className="mt-2 inline-block text-sm text-gray-600 underline">
           Start a new review
         </Link>
@@ -81,6 +88,9 @@ export default function ReviewDetailPage() {
           validatorSource={run.validator_source}
           sandboxUsed={run.sandbox_used}
         />
+      )}
+      {actionError && (
+        <p className="border-t border-gray-200 bg-white px-6 py-3 text-sm text-accent">{actionError}</p>
       )}
       <ApprovalPanel run={run} onApprove={handleApprove} onReject={handleReject} busy={busy} />
     </main>
