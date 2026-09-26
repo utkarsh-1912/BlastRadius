@@ -1,16 +1,48 @@
+# --- secrets / env ---
 .env
 .env.local
+.env.*.local
+
+# --- Python ---
 __pycache__/
 **/__pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 .pytest_cache/
 **/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
 .venv/
 venv/
+env/
+.Python
+
+# --- Node / Next.js ---
 node_modules/
 .next/
 out/
 dist/
-*.log
+build/
+*.tsbuildinfo
+.npm/
+.eslintcache
+
+# --- Blast Radius runtime data ---
 server/data/blast_radius_history.sqlite3
+*.sqlite3-journal
+
+# --- logs ---
+*.log
+npm-debug.log*
+
+# --- editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
 .DS_Store
+Thumbs.db
+desktop.ini
