@@ -133,6 +133,8 @@ Open `http://localhost:3000` and submit: *"Review IAM access for the data-pipeli
 
 **Note:** if TrueForge/Daytona aren't configured, the orchestrator replays locally in-process instead of in the sandbox, and logs this plainly in the agent timeline. If the real AWS policy simulator isn't reachable (e.g. moto, which doesn't implement `SimulateCustomPolicy`), it falls back to a second, independently-written reference evaluator and says so — the two-evaluator-agreement guarantee holds either way, it's just not backed by a literal AWS API call in that mode.
 
+**New to this repo and want the fastest path to a working, demo-ready setup?** [RUNBOOK.md](RUNBOOK.md) is one exact, sequential command list from a clean checkout to a live demo, with an explicit stop-and-fix gate at each point something commonly goes wrong. [docs/demo.md](docs/demo.md) is the live-presentation script; [docs/recording-script.md](docs/recording-script.md) is a word-for-word script for recording a solo demo video.
+
 ## Reports & scheduled reviews
 
 `scripts/generate_report.py` scans roles (optionally by prefix), runs the same deterministic review pipeline on each, writes an aggregate Markdown report, and persists every run to the audit-history store — so a scheduled run and the interactive dashboard share one history. It never writes to AWS IAM; every finding still needs a human to approve it in the dashboard. See [docs/reports.md](docs/reports.md) for usage and how to schedule it (cron / Windows Task Scheduler).
