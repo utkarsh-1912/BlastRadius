@@ -34,6 +34,7 @@ build/
 # --- Blast Radius runtime data ---
 server/data/blast_radius_history.sqlite3
 *.sqlite3-journal
+/reports/
 
 # --- logs ---
 *.log
